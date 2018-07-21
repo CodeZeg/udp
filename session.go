@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -39,7 +40,8 @@ type Session struct {
 	encoder *fecEncoder // fec
 	decoder *fecDecoder // fec
 	pool    *bufpool    // 数据缓存池
-	Closed  bool        // 关闭
+	//Closed  bool        // 关闭
+	closed int32 // 关闭
 
 	conn        net.UDPConn // socket
 	remote_addr net.Addr    // 远端地址,客户端的地址是可以随时变动的 因为wifi/4g等情况很常见
@@ -54,7 +56,6 @@ func newSession(conv uint32, conn net.UDPConn, pool *bufpool) *Session {
 	s.conv = conv
 	s.conn = conn
 	s.pool = pool
-	s.Closed = false
 	// fec
 	s.encoder = newFECEncoder(Fec_len, Pack_max_len)
 	s.decoder = newFECDecoder(Fec_cacheLen)
@@ -77,9 +78,13 @@ func newSession(conv uint32, conn net.UDPConn, pool *bufpool) *Session {
 	return s
 }
 
+func (s *Session) GetConv() uint32 {
+	return atomic.LoadUint32(&s.conv)
+}
+
 // send data to socket
 func (s *Session) writeToFecToSocket(buf []byte, size int) {
-	if s.Closed {
+	if 1 == atomic.LoadInt32(&s.closed) {
 		return
 	}
 
@@ -113,7 +118,7 @@ func (s *Session) writeToFecToSocket(buf []byte, size int) {
 
 // send data to kcp
 func (s *Session) Send(b []byte) {
-	if !s.Closed {
+	if 0 == atomic.LoadInt32(&s.closed) {
 		s.kcp.Send(b)
 	}
 }
@@ -124,7 +129,7 @@ func (s *Session) update() {
 
 CLOSED:
 	for {
-		if s.Closed {
+		if 1 == atomic.LoadInt32(&s.closed) {
 			break CLOSED
 		}
 
@@ -161,5 +166,9 @@ func (s *Session) PushBuf(buf []byte) {
 
 // 关闭会话
 func (s *Session) close() {
-	s.Closed = true
+	atomic.StoreInt32(&s.closed, 1)
+}
+
+func (s *Session) IsClosed() bool {
+	return 1 == atomic.LoadInt32(&s.closed)
 }
