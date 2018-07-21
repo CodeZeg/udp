@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"joynova.com/joynova/udp"
+	"github.com/CodeZeg/udp"
 )
 
 func main() {

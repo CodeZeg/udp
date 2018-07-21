@@ -2,7 +2,6 @@ package udp
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"strconv"
 )
@@ -68,8 +67,6 @@ func (l *Listener) receiver(chPack chan<- inPacket) {
 			chPack <- inPacket{addr, buf[:n]}
 		}
 	}
-
-	fmt.Println("receiver closed")
 }
 
 // 监听socket收到的消息
@@ -93,8 +90,6 @@ CLOSED:
 			}
 		}
 	}
-
-	fmt.Println("monitor closed")
 }
 
 // 添加会话
