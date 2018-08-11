@@ -9,7 +9,6 @@ import (
 type Client struct {
 	conn    net.PacketConn // socket
 	session *Session       // 会话
-	pool    *bufpool       // 数据缓存
 	Closed  bool
 
 	Err     chan error  // 错误通道
@@ -29,8 +28,7 @@ func NewClient(conv uint32, raddr string) (*Client, error) {
 
 	c := new(Client)
 	c.conn = conn
-	c.pool = newBufPool(256, 1024)
-	c.session = newSession(conv, *conn, c.pool)
+	c.session = newSession(conv, *conn)
 	c.session.remote_addr = nil
 	c.Err = c.session.Err
 	c.ChLogic = c.session.ChLogic
@@ -54,24 +52,17 @@ CLOSED:
 			break
 		}
 
-		buf := c.pool.pop()
+		buf := make([]byte, 1024)
 		n, _, err := c.conn.ReadFrom(buf)
 		if c.Closed {
-			c.pool.push(buf)
 			break CLOSED
 		} else if err != nil {
-			c.pool.push(buf)
 			c.Err <- err
 		} else {
 			buf = buf[:n]
 			c.session.chSocket <- buf
 		}
 	}
-}
-
-// 逻辑层已经处理完数据之后需要手动在这里缓存数据 重复利用
-func (c *Client) PushBuf(buf []byte) {
-	c.session.PushBuf(buf)
 }
 
 // 关闭

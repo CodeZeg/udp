@@ -9,8 +9,7 @@ import (
 )
 
 var (
-	Pack_max_len   int = 1024 // 单个udp包的最大包长，用于做缓存（ 必须 >= kcp_mtu + fec_head_Len）
-	Pack_pool_size int = 256  // 缓存包的初始容量
+	Pack_max_len int = 1024 // 单个udp包的最大包长，用于做缓存（ 必须 >= kcp_mtu + fec_head_Len）
 
 	Fec_len      int    = 3   // fec 冗余册数 3 => p1(x1, x2, x3)
 	Fec_cacheLen uint32 = 256 // fec 序号收到的记录长度 需要大于 kcp的wnd_size
@@ -39,7 +38,6 @@ type Session struct {
 	kcp     *KCP        // kcp
 	encoder *fecEncoder // fec
 	decoder *fecDecoder // fec
-	pool    *bufpool    // 数据缓存池
 	//Closed  bool        // 关闭
 	closed int32 // 关闭
 
@@ -51,17 +49,15 @@ type Session struct {
 	ChLogic chan []byte // 抛出数据给逻辑层的通道
 }
 
-func newSession(conv uint32, conn net.UDPConn, pool *bufpool) *Session {
+func newSession(conv uint32, conn net.UDPConn) *Session {
 	s := new(Session)
 	s.conv = conv
 	s.conn = conn
-	s.pool = pool
 	// fec
 	s.encoder = newFECEncoder(Fec_len, Pack_max_len)
 	s.decoder = newFECDecoder(Fec_cacheLen)
 	// kcp
 	s.kcp = NewKCP(conv, s.writeToFecToSocket)
-	s.kcp.pool = s.pool
 	s.kcp.NoDelay(Kcp_nodelay, Kcp_interval, Kcp_resend, Kcp_nc)
 	s.kcp.SetMtu(Kcp_mtu)
 	s.kcp.WndSize(Kcp_wnd_size, Kcp_wnd_size)
@@ -138,13 +134,12 @@ CLOSED:
 			f := s.decoder.decodeBytes(data)
 			if f != nil {
 				err := s.kcp.Input(f, true, false)
-				s.pool.push(data)
 				if err != 0 {
 					s.Err <- errors.New("kcp recv data error " + strconv.Itoa(err))
 				} else {
 					for {
 						if size := s.kcp.PeekSize(); size > 0 {
-							buf := s.pool.pop()
+							buf := make([]byte, Pack_max_len)
 							len := s.kcp.Recv(buf)
 							s.ChLogic <- buf[:len]
 						} else {
@@ -157,11 +152,6 @@ CLOSED:
 			s.kcp.Update(uint32(time.Now().UnixNano() / int64(time.Millisecond)))
 		}
 	}
-}
-
-// 逻辑层已经处理完数据之后需要手动在这里缓存数据 重复利用
-func (s *Session) PushBuf(buf []byte) {
-	s.pool.push(buf)
 }
 
 // 关闭会话

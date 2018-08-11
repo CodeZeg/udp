@@ -9,7 +9,6 @@ import (
 func main() {
 	// 设置 因为参数数量有点多 所以全部使用变量而非函数 并且已经给了一个相对较好的默认值
 	udp.Lis_sess_capacity = 1024
-	udp.Lis_pool_size = 256
 	udp.Pack_max_len = 256
 	udp.Kcp_mtu = 252
 	udp.Sess_ch_socket_size = 64
@@ -39,8 +38,6 @@ func main() {
 				case buf := <-s.ChLogic:
 					fmt.Println("recv : " + string(buf))
 					s.Send(buf)
-					// 注意这里 收到的逻辑包处理完成之后需要扔回给session重用
-					s.PushBuf(buf)
 
 					index++
 					if index > 10000 {

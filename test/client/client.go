@@ -42,7 +42,6 @@ func main() {
 					}
 				case buf := <-client.ChLogic:
 					fmt.Println("recv : " + string(buf))
-					client.PushBuf(buf)
 				}
 			}
 			fmt.Println("client closed")

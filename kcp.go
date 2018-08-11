@@ -147,7 +147,6 @@ type KCP struct {
 	output output_callback
 
 	current uint32
-	pool    *bufpool
 }
 
 type ackItem struct {
@@ -179,16 +178,9 @@ func NewKCP(conv uint32, output output_callback) *KCP {
 // newSegment creates a KCP segment
 func (kcp *KCP) newSegment(size int) (seg segment) {
 	if size > 0 {
-		seg.data = kcp.pool.pop()[:size]
+		seg.data = make([]byte, size)
 	}
 	return
-}
-
-// delSegment recycles a KCP segment
-func (kcp *KCP) delSegment(seg segment) {
-	if cap(seg.data) > 0 {
-		kcp.pool.push(seg.data)
-	}
 }
 
 // PeekSize checks the size of next message in the recv queue
@@ -244,7 +236,6 @@ func (kcp *KCP) Recv(buffer []byte) (n int) {
 		buffer = buffer[len(seg.data):]
 		n += len(seg.data)
 		count++
-		kcp.delSegment(*seg)
 		if seg.frg == 0 {
 			break
 		}
@@ -388,7 +379,6 @@ func (kcp *KCP) parse_ack(sn uint32) {
 	for k := range kcp.snd_buf {
 		seg := &kcp.snd_buf[k]
 		if sn == seg.sn {
-			kcp.delSegment(*seg)
 			copy(kcp.snd_buf[k:], kcp.snd_buf[k+1:])
 			kcp.snd_buf[len(kcp.snd_buf)-1] = segment{}
 			kcp.snd_buf = kcp.snd_buf[:len(kcp.snd_buf)-1]
@@ -420,7 +410,6 @@ func (kcp *KCP) parse_una(una uint32) {
 	for k := range kcp.snd_buf {
 		seg := &kcp.snd_buf[k]
 		if _itimediff(una, seg.sn) > 0 {
-			kcp.delSegment(*seg)
 			count++
 		} else {
 			break
@@ -440,7 +429,6 @@ func (kcp *KCP) parse_data(newseg segment) {
 	sn := newseg.sn
 	if _itimediff(sn, kcp.rcv_nxt+kcp.rcv_wnd) >= 0 ||
 		_itimediff(sn, kcp.rcv_nxt) < 0 {
-		kcp.delSegment(newseg)
 		return
 	}
 
@@ -468,7 +456,7 @@ func (kcp *KCP) parse_data(newseg segment) {
 			kcp.rcv_buf[insert_idx] = newseg
 		}
 	} else {
-		kcp.delSegment(newseg)
+
 	}
 
 	// move available data from rcv_buf -> rcv_queue

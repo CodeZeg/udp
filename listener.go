@@ -5,22 +5,20 @@ import (
 	"net"
 	"strconv"
 	"sync"
-
-	"github.com/Jeffail/tunny"
 )
 
 var (
-	Lis_sess_capacity int = 1024 // 监听器的初始容量
-	Lis_pool_size     int = 256  // 监听器的解包分发协程数量
+	Lis_sess_capacity  int = 1024 // 监听器的初始容量
+	Channel_Pack_count int = 256  // 监听器的解包分发协程数量
+	Channel_Pack_size  int = 1024 // 监听器的收到通道数量
 )
 
 type Listener struct {
-	conn      net.UDPConn // udp连接
-	Err       chan error  // 错误通道 具体错误处理交给逻辑层
-	pool      *bufpool    // 数据包缓存池 所有session公用一个
-	sessions  sync.Map    // uint32 - *Session // 会话列表
-	tunnyPool *tunny.Pool
-	Closed    bool // 关闭状态
+	conn     net.UDPConn     // udp连接
+	Err      chan error      // 错误通道 具体错误处理交给逻辑层
+	sessions sync.Map        // uint32 - *Session // 会话列表
+	Closed   bool            // 关闭状态
+	chPack   []chan inPacket // 收包通道列表
 }
 
 type inPacket struct {
@@ -43,46 +41,62 @@ func Listen(laddr string) (*Listener, error) {
 	l := new(Listener)
 	l.conn = *conn
 	l.Err = make(chan error, 32)
-	l.pool = newBufPool(Pack_pool_size, Pack_max_len)
 	l.Closed = false
-	l.tunnyPool = tunny.NewFunc(Lis_pool_size, l.monitor)
 
 	go l.receiver()
+
+	l.chPack = make([]chan inPacket, Channel_Pack_count)
+	for i := 0; i < Channel_Pack_count; i++ {
+		l.chPack[i] = make(chan inPacket, Channel_Pack_size)
+		go l.monitor(l.chPack[i])
+	}
 
 	return l, nil
 }
 
 func (l *Listener) receiver() {
-	defer l.tunnyPool.Close()
+	count := 0
 	for {
 		if l.Closed {
 			break
 		}
 
-		buf := l.pool.pop()
+		buf := make([]byte, Pack_max_len)
 		n, addr, err := l.conn.ReadFrom(buf)
 		if err != nil {
 			l.Err <- err
 			break
 		} else {
-			l.tunnyPool.Process(inPacket{addr, buf[:n]})
+			l.chPack[count] <- inPacket{addr, buf[:n]}
+			count++
+			if count == Channel_Pack_count {
+				count = 0
+			}
 		}
 	}
 }
 
 // 收到消息的处理
-func (l *Listener) monitor(data interface{}) interface{} {
-	pack := data.(inPacket)
-	var conv uint32
-	ikcp_decode32u(pack.buf[fecHeaderSize:], &conv)
-	s, ok := l.sessions.Load(conv)
-	if !ok {
-		l.Err <- errors.New("收到不存在的会话发来的消息 : " + strconv.Itoa(int(conv)))
-	} else {
-		s.(*Session).remote_addr = pack.addr
-		s.(*Session).chSocket <- pack.buf
+func (l *Listener) monitor(chPack <-chan inPacket) {
+CLOSED:
+	for {
+		if l.Closed {
+			break CLOSED
+		}
+
+		select {
+		case pack := <-chPack:
+			var conv uint32
+			ikcp_decode32u(pack.buf[fecHeaderSize:], &conv)
+			s, ok := l.sessions.Load(conv)
+			if !ok {
+				l.Err <- errors.New("收到不存在的会话发来的消息 : " + strconv.Itoa(int(conv)))
+			} else {
+				s.(*Session).remote_addr = pack.addr
+				s.(*Session).chSocket <- pack.buf
+			}
+		}
 	}
-	return nil
 }
 
 // 添加会话
@@ -93,7 +107,7 @@ func (l *Listener) AddSession(conv uint32) (*Session, error) {
 		return nil, err
 	}
 
-	s := newSession(conv, l.conn, l.pool)
+	s := newSession(conv, l.conn)
 	l.sessions.Store(conv, s)
 	return s, nil
 }
