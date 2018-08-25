@@ -19,7 +19,7 @@ func main() {
 	die := make(chan bool, 1)
 	for i := 8600; i < 8700; i++ {
 		go func(conv uint32) {
-			client, err := udp.NewClient(conv, "192.168.1.134:4000")
+			client, err := udp.NewClient(conv, "127.0.0.1:4000")
 			if err != nil {
 				fmt.Println(err)
 			}

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net"
 	"strconv"
-	"sync/atomic"
 	"time"
 )
 
@@ -34,12 +33,12 @@ var (
 // seg: pop=>new=>delete=>push
 // unpack: pop=>unpack=>logic=>push
 type Session struct {
-	conv    uint32      // 会话id
-	kcp     *KCP        // kcp
-	encoder *fecEncoder // fec
-	decoder *fecDecoder // fec
-	//Closed  bool        // 关闭
-	closed int32 // 关闭
+	conv     uint32      // 会话id
+	kcp      *KCP        // kcp
+	encoder  *fecEncoder // fec
+	decoder  *fecDecoder // fec
+	closed   bool        // 关闭
+	chClosed chan bool   // 关闭通道 用于关闭协程
 
 	conn        net.UDPConn // socket
 	remote_addr net.Addr    // 远端地址,客户端的地址是可以随时变动的 因为wifi/4g等情况很常见
@@ -53,6 +52,8 @@ func newSession(conv uint32, conn net.UDPConn) *Session {
 	s := new(Session)
 	s.conv = conv
 	s.conn = conn
+	s.closed = false
+	s.chClosed = make(chan bool)
 	// fec
 	s.encoder = newFECEncoder(Fec_len, Pack_max_len)
 	s.decoder = newFECDecoder(Fec_cacheLen)
@@ -74,13 +75,14 @@ func newSession(conv uint32, conn net.UDPConn) *Session {
 	return s
 }
 
+// GetConv get conv id
 func (s *Session) GetConv() uint32 {
-	return atomic.LoadUint32(&s.conv)
+	return s.conv
 }
 
 // send data to socket
 func (s *Session) writeToFecToSocket(buf []byte, size int) {
-	if 1 == atomic.LoadInt32(&s.closed) {
+	if s.closed {
 		return
 	}
 
@@ -112,9 +114,9 @@ func (s *Session) writeToFecToSocket(buf []byte, size int) {
 	}
 }
 
-// send data to kcp
+// Send data to kcp
 func (s *Session) Send(b []byte) {
-	if 0 == atomic.LoadInt32(&s.closed) {
+	if !s.closed {
 		s.kcp.Send(b)
 	}
 }
@@ -122,14 +124,10 @@ func (s *Session) Send(b []byte) {
 // 监听收取消息
 func (s *Session) update() {
 	timer := time.NewTicker(time.Millisecond * Kcp_update)
-
-CLOSED:
 	for {
-		if 1 == atomic.LoadInt32(&s.closed) {
-			break CLOSED
-		}
-
 		select {
+		case <-s.chClosed:
+			return
 		case data := <-s.chSocket:
 			f := s.decoder.decodeBytes(data)
 			if f != nil {
@@ -156,9 +154,6 @@ CLOSED:
 
 // 关闭会话
 func (s *Session) close() {
-	atomic.StoreInt32(&s.closed, 1)
-}
-
-func (s *Session) IsClosed() bool {
-	return 1 == atomic.LoadInt32(&s.closed)
+	s.closed = true
+	s.chClosed <- true
 }

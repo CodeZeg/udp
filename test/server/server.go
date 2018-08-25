@@ -30,7 +30,6 @@ func main() {
 
 		go func(s *udp.Session) {
 			index := 0
-		CLOSED:
 			for {
 				select {
 				case err := <-s.Err:
@@ -40,10 +39,10 @@ func main() {
 					s.Send(buf)
 
 					index++
-					if index > 10000 {
-						// lis.RemoveSession(conv)
-						lis.Close()
-						break CLOSED
+					if index > 3000 {
+						lis.RemoveSession(conv)
+						// lis.Close()
+						return
 					}
 				}
 			}
@@ -52,10 +51,6 @@ func main() {
 	}
 
 	for {
-		if lis.Closed {
-			break
-		}
-
 		select {
 		case err := <-lis.Err:
 			fmt.Println("udp listener error :" + err.Error())

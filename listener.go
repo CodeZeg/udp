@@ -17,7 +17,8 @@ type Listener struct {
 	conn     net.UDPConn     // udp连接
 	Err      chan error      // 错误通道 具体错误处理交给逻辑层
 	sessions sync.Map        // uint32 - *Session // 会话列表
-	Closed   bool            // 关闭状态
+	closed   bool            // 关闭状态
+	chClosed chan bool       // 关闭通道 用于关闭内部协程
 	chPack   []chan inPacket // 收包通道列表
 }
 
@@ -41,7 +42,8 @@ func Listen(laddr string) (*Listener, error) {
 	l := new(Listener)
 	l.conn = *conn
 	l.Err = make(chan error, 32)
-	l.Closed = false
+	l.closed = false
+	l.chClosed = make(chan bool)
 
 	go l.receiver()
 
@@ -57,7 +59,7 @@ func Listen(laddr string) (*Listener, error) {
 func (l *Listener) receiver() {
 	count := 0
 	for {
-		if l.Closed {
+		if l.closed {
 			break
 		}
 
@@ -78,13 +80,10 @@ func (l *Listener) receiver() {
 
 // 收到消息的处理
 func (l *Listener) monitor(chPack <-chan inPacket) {
-CLOSED:
 	for {
-		if l.Closed {
-			break CLOSED
-		}
-
 		select {
+		case <-l.chClosed:
+			return
 		case pack := <-chPack:
 			var conv uint32
 			ikcp_decode32u(pack.buf[fecHeaderSize:], &conv)
@@ -125,7 +124,11 @@ func (l *Listener) RemoveSession(conv uint32) {
 
 // 关闭
 func (l *Listener) Close() {
-	l.Closed = true
+	l.closed = true
+
+	for i := 0; i < Channel_Pack_count; i++ {
+		l.chClosed <- true
+	}
 
 	l.sessions.Range(func(key, value interface{}) bool {
 		value.(*Session).close()
@@ -133,5 +136,5 @@ func (l *Listener) Close() {
 
 		return true
 	})
-	// l.conn.Close()
+	l.conn.Close()
 }
