@@ -22,6 +22,7 @@ var (
 	Kcp_update   time.Duration = 10  // kcp的update调用时间间隔
 
 	Sess_ch_socket_size int = 64 // 会话接收socket数据的通道大小
+	Sess_ch_send_size   int = 64 // 会话发送数据的通道大小
 	Sess_ch_logic_size  int = 16 // 会话投递数据给logic的通道大小
 )
 
@@ -43,6 +44,7 @@ type Session struct {
 	conn        net.UDPConn // socket
 	remote_addr net.Addr    // 远端地址,客户端的地址是可以随时变动的 因为wifi/4g等情况很常见
 	chSocket    chan []byte // 接收socket数据的通道
+	chSend      chan []byte // 发送消息的通道
 
 	Err     chan error  // 错误信息通道
 	ChLogic chan []byte // 抛出数据给逻辑层的通道
@@ -65,6 +67,7 @@ func newSession(conv uint32, conn net.UDPConn) *Session {
 
 	// 从网络层接收数据
 	s.chSocket = make(chan []byte, Sess_ch_socket_size)
+	s.chSend = make(chan []byte, Sess_ch_send_size)
 	// 抛数据给逻辑层
 	s.ChLogic = make(chan []byte, Sess_ch_logic_size)
 	// 异常处理
@@ -116,9 +119,7 @@ func (s *Session) writeToFecToSocket(buf []byte, size int) {
 
 // Send data to kcp
 func (s *Session) Send(b []byte) {
-	if !s.closed {
-		s.kcp.Send(b)
-	}
+	s.chSend <- b
 }
 
 // 监听收取消息
@@ -128,6 +129,8 @@ func (s *Session) update() {
 		select {
 		case <-s.chClosed:
 			return
+		case buf := <-s.chSend:
+			s.kcp.Send(buf)
 		case data := <-s.chSocket:
 			f := s.decoder.decodeBytes(data)
 			if f != nil {
