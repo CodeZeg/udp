@@ -125,6 +125,7 @@ func (s *Session) Send(b []byte) {
 // 监听收取消息
 func (s *Session) update() {
 	timer := time.NewTicker(time.Millisecond * Kcp_update)
+	defer timer.Stop()
 	for {
 		select {
 		case <-s.chClosed:
