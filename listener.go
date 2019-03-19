@@ -116,6 +116,7 @@ func (l *Listener) RemoveSession(conv uint32) {
 	s, ok := l.sessions.Load(conv)
 	if !ok {
 		l.Err <- errors.New("not find seesion id" + strconv.Itoa(int(conv)))
+		return
 	}
 
 	s.(*Session).close()
